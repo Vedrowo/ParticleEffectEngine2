@@ -129,6 +129,15 @@ public class Particle implements Serializable {
 
         gc.setColor(getColor());
 
+        /*
+        gc.setColor(Color.WHITE);
+        gc.fillRect(
+                (int)x,
+                (int)y,
+                (int)size,
+                (int)size
+        );
+        */
 
         gc.fillOval(
                 (int)(x - size / 2),

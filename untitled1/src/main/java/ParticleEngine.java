@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import mpi.*;
 
 public class ParticleEngine {
     private final ArrayList<Particle> particles = new ArrayList<>();
@@ -15,14 +16,13 @@ public class ParticleEngine {
     private double emissionRate = 0;
     private double emissionAccumulator = 0;
     private double emitterX, emitterY;
-    private int maxX;
-    private int maxY;
+    private int maxX, maxY;
     private final int workers;
     private static final double cellSize = 50;
-    private final ArrayList<Particle> neighbors = new ArrayList<>();
+    private final ArrayList<ArrayList<Particle>> neighborResults = new ArrayList<>();
     private final ArrayList<Particle> cluster = new ArrayList<>();
-    //private final Map<CellKey, ConcurrentLinkedQueue<Particle>> grid = new ConcurrentHashMap<>();
-    private final Map<CellKey, ArrayList<Particle>> grid = new HashMap<>();
+    record CellKey(int x, int y) {}
+    private final Map<CellKey, ArrayList<Particle>> map = new HashMap<>();
     private ExecutorService executor;
 
     enum ExecutionMode {
@@ -36,6 +36,11 @@ public class ParticleEngine {
     private volatile BufferedImage displayBuffer;
     private boolean useA = true;
     private int bufferWidth = -1, bufferHeight = -1;
+
+    public static int mpiRank = 0;
+    public static int mpiSize = 1;
+    static final int WORK_TAG = 1;
+    static final int STOP_TAG = 2;
 
 
 
@@ -80,9 +85,7 @@ public class ParticleEngine {
         displayBuffer = target;
     }
 
-    record CellKey(int x, int y) {}
-
-    public void paint(Graphics g, int width, int height) {
+    public void paint(Graphics g) {
         BufferedImage snapshot = displayBuffer;
         if (snapshot != null) {
             g.drawImage(snapshot, 0, 0, null);
@@ -100,28 +103,127 @@ public class ParticleEngine {
 
         updateMovement();
 
-        /*
-        grid.clear();
+        map.clear();
 
         for (Particle p : particles) {
             if (!p.isAlive()) continue;
-
             CellKey cell = new CellKey((int)(p.x / cellSize), (int)(p.y / cellSize));
-
-            //grid.computeIfAbsent(cell, _ -> new ConcurrentLinkedQueue<>()).add(p);
-            grid.computeIfAbsent(cell, _ -> new ArrayList<>()).add(p);
+            map.computeIfAbsent(cell, _ -> new ArrayList<>()).add(p);
         }
 
-        for (Particle p : particles) {
-            if (!p.isAlive() || p.age < 0.7) continue;
-            handleCollisions(p, grid);
-        } */
+        detectCollisions(map);
+
+        mergeCollisions();
 
         for (Particle p : particles) {
             if (p.isAlive()) return true;
         }
         return false;
 
+    }
+
+    private void detectCollisions(Map<CellKey, ArrayList<Particle>> map){
+        if (model == ExecutionMode.SEQUENTIAL){
+            detectCollisionsSequential(map);
+        } else if (model == ExecutionMode.PARALLEL){
+            detectCollisionsParallel(map);
+        } else {
+            detectCollisionsDistributed(map);
+        }
+    }
+
+    private void detectCollisionsSequential(Map<CellKey, ArrayList<Particle>> map) {
+        int n = particles.size();
+
+        neighborResults.clear();
+        for (int i = 0; i < n; i++) {
+            neighborResults.add(new ArrayList<>());
+        }
+
+        for (int j = 0; j < n; j++) {
+            checkNeighbours(map, j);
+        }
+    }
+
+    private void detectCollisionsParallel(Map<CellKey, ArrayList<Particle>> map) {
+        int n = particles.size();
+
+        neighborResults.clear();
+        for (int i = 0; i < n; i++) {
+            neighborResults.add(new ArrayList<>());
+        }
+
+        int chunkSize = (n + workers - 1) / workers;
+        if (chunkSize == 0) return;
+
+        ArrayList<Runnable> tasks = new ArrayList<>();
+
+        for (int i = 0; i < n; i += chunkSize) {
+            int start = i;
+            int end = Math.min(i + chunkSize, n);
+
+            tasks.add(() -> {
+                for (int j = start; j < end; j++) {
+                    checkNeighbours(map, j);
+                }
+            });
+        }
+
+        try {
+            executor.invokeAll(
+                    tasks.stream().map(Executors::callable).toList()
+            );
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void detectCollisionsDistributed(Map<CellKey, ArrayList<Particle>> map){
+        detectCollisionsSequential(map);
+    }
+
+    private void checkNeighbours(Map<CellKey, ArrayList<Particle>> map, int j) {
+        Particle p = particles.get(j);
+        if (!p.isAlive() || p.age < 0.7) return;
+
+        ArrayList<Particle> found = neighborResults.get(j);
+        CellKey cell = new CellKey((int)(p.x / cellSize), (int)(p.y / cellSize));
+
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                CellKey neighborCell = new CellKey(cell.x() + dx, cell.y() + dy);
+                ArrayList<Particle> others = map.get(neighborCell);
+                if (others == null) continue;
+
+                for (Particle other : others) {
+                    if (other != p && isColliding(p, other)) {
+                        found.add(other);
+                    }
+                }
+            }
+        }
+    }
+
+    private void mergeCollisions(){
+        for (int i = 0; i < particles.size(); i++) {
+            Particle p = particles.get(i);
+            if (!p.isAlive() || p.age < 0.7 || p.mergedThisFrame) continue;
+
+            cluster.clear();
+            cluster.add(p);
+            p.mergedThisFrame = true;
+
+            for (Particle other : neighborResults.get(i)) {
+                if (!other.mergedThisFrame) {
+                    cluster.add(other);
+                    other.mergedThisFrame = true;
+                }
+            }
+
+            if (cluster.size() > 1) {
+                mergeCluster(cluster);
+            }
+        }
     }
 
     private void emitOrRecycle(double deltaTime){
@@ -195,7 +297,72 @@ public class ParticleEngine {
     }
 
     private void updateMovementDistributed(){
+        int workerCount = mpiSize - 1;
+        if (workerCount <= 0) {
+            updateMovementSequential();
+            return;
+        }
 
+        int n = particles.size();
+        int chunkSize = (n + workerCount - 1) / workerCount;
+
+        try {
+            for (int w = 0; w < workerCount; w++) {
+                int start = w * chunkSize;
+                int end = Math.min(start + chunkSize, n);
+                if (start >= end) continue;
+
+                Particle[] chunk = new Particle[end - start];
+                for (int i = start; i < end; i++) {
+                    chunk[i - start] = particles.get(i);
+                }
+
+                MPI.COMM_WORLD.Send(chunk, 0, chunk.length, MPI.OBJECT, w + 1, WORK_TAG);
+            }
+
+            for (int w = 0; w < workerCount; w++) {
+                int start = w * chunkSize;
+                int end = Math.min(start + chunkSize, n);
+                if (start >= end) continue;
+
+                Particle[] result = new Particle[end - start];
+                MPI.COMM_WORLD.Recv(result, 0, result.length, MPI.OBJECT, w + 1, WORK_TAG);
+
+                for (int i = start; i < end; i++) {
+                    particles.set(i, result[i - start]);
+                }
+            }
+        } catch (MPIException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void runWorker() {
+        int maxChunk = 5000;
+        Particle[] buffer = new Particle[maxChunk];
+
+        while (true) {
+            try {
+                Status status = MPI.COMM_WORLD.Recv(buffer, 0, maxChunk, MPI.OBJECT, 0, MPI.ANY_TAG);
+
+                if (status.tag == STOP_TAG) {
+                    break;
+                }
+
+                int count = status.Get_count(MPI.OBJECT);
+
+                for (int i = 0; i < count; i++) {
+                    if (buffer[i].isAlive()) {
+                        buffer[i].movement();
+                    }
+                }
+
+                MPI.COMM_WORLD.Send(buffer, 0, count, MPI.OBJECT, 0, WORK_TAG);
+            } catch (MPIException e) {
+                e.printStackTrace();
+                break;
+            }
+        }
     }
 
     public void startBurst(double x, double y, int maxX, int maxY, int addCount, ExecutionMode model){
@@ -221,40 +388,6 @@ public class ParticleEngine {
         this.maxY = maxY;
         this.addCount = addCount;
     }
-
-    private void handleCollisions(Particle p, Map<CellKey, ArrayList<Particle>> map) {
-        if (p.mergedThisFrame) return;
-
-        neighbors.clear();
-        cluster.clear();
-
-        cluster.add(p);
-        p.mergedThisFrame = true;
-
-        CellKey cell = new CellKey((int)(p.x / cellSize), (int)(p.y / cellSize));
-
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dy = -1; dy <= 1; dy++) {
-                CellKey neighborCell = new CellKey(cell.x() + dx, cell.y() + dy);
-                var others = map.get(neighborCell);
-                if (others != null) {
-                    neighbors.addAll(others);
-                }
-            }
-        }
-
-        for (Particle other : neighbors) {
-            if (other != p && !other.mergedThisFrame && isColliding(p, other)) {
-                cluster.add(other);
-                other.mergedThisFrame = true;
-            }
-        }
-
-        if (cluster.size() > 1){
-            mergeCluster(cluster);
-        }
-    }
-
 
     private void mergeCluster(ArrayList<Particle> cluster) {
         if (cluster.isEmpty()) return;

@@ -38,7 +38,7 @@ public class GUI {
             }
 
             if(Objects.equals(mode, "Over-time")){
-                if(Objects.equals(model, "Sequential")){
+                if (Objects.equals(model, "Sequential")){
                     engine.startOverTime(x, y, drawingPanel.getWidth(), drawingPanel.getHeight(), numParticles, ratePerSecond, ParticleEngine.ExecutionMode.SEQUENTIAL);
                 } else if (Objects.equals(model, "Parallel")){
                     engine.startOverTime(x, y, drawingPanel.getWidth(), drawingPanel.getHeight(), numParticles, ratePerSecond, ParticleEngine.ExecutionMode.PARALLEL);
@@ -46,7 +46,7 @@ public class GUI {
                     engine.startOverTime(x, y, drawingPanel.getWidth(), drawingPanel.getHeight(), numParticles, ratePerSecond, ParticleEngine.ExecutionMode.DISTRIBUTED);
                 }
             } else if (Objects.equals(mode, "Burst")){
-                if(Objects.equals(model, "Sequential")){
+                if (Objects.equals(model, "Sequential")){
                     engine.startBurst(x, y, drawingPanel.getWidth(), drawingPanel.getHeight(), numParticles, ParticleEngine.ExecutionMode.SEQUENTIAL);
                 } else if (Objects.equals(model, "Parallel")){
                     engine.startBurst(x, y, drawingPanel.getWidth(), drawingPanel.getHeight(), numParticles, ParticleEngine.ExecutionMode.PARALLEL);
@@ -153,7 +153,7 @@ public class GUI {
                 super.paintComponent(g);
                 // System.out.println("Panel size: " + getWidth() + " " + getHeight());
                 if (engine != null) {
-                    engine.paint(g, getWidth(), getHeight());
+                    engine.paint(g);
                 }
             }
         };
