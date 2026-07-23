@@ -300,6 +300,7 @@ public class ParticleEngine {
         int workerCount = mpiSize - 1;
         if (workerCount <= 0) {
             updateMovementSequential();
+            System.out.println("Fallback to sequential");
             return;
         }
 
@@ -307,6 +308,8 @@ public class ParticleEngine {
         int chunkSize = (n + workerCount - 1) / workerCount;
 
         try {
+            System.out.println("Distributing movement across " + workerCount + " MPI worker(s).");
+
             for (int w = 0; w < workerCount; w++) {
                 int start = w * chunkSize;
                 int end = Math.min(start + chunkSize, n);
