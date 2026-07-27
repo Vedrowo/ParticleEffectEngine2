@@ -64,7 +64,7 @@ public class Particle implements Serializable {
             this.lifetime = 60;
         }else {
             this.size = 30;
-            this.lifetime = 187.5;
+            this.lifetime = 187.5 + (Math.random() - 0.5) * 40;
         }
 
         this.startingSize = size;

@@ -275,7 +275,7 @@ public class ParticleEngine {
             int start = i;
             int end = Math.min(i + chunkSize, particles.size());
 
-            System.out.println("chunk: " + start + " to " + end);
+            //System.out.println("chunk: " + start + " to " + end);
 
             tasks.add(() -> {
                 for (int j = start; j < end; j++) {
@@ -308,7 +308,7 @@ public class ParticleEngine {
         int chunkSize = (n + workerCount - 1) / workerCount;
 
         try {
-            System.out.println("Distributing movement across " + workerCount + " MPI worker(s).");
+            //System.out.println("Distributing movement to " + workerCount + " MPI workers.");
 
             for (int w = 0; w < workerCount; w++) {
                 int start = w * chunkSize;
@@ -341,16 +341,19 @@ public class ParticleEngine {
     }
 
     public static void runWorker() {
-        int maxChunk = 5000;
-        Particle[] buffer = new Particle[maxChunk];
-
         while (true) {
             try {
-                Status status = MPI.COMM_WORLD.Recv(buffer, 0, maxChunk, MPI.OBJECT, 0, MPI.ANY_TAG);
+                Status probeStatus = MPI.COMM_WORLD.Probe(0, MPI.ANY_TAG);
+                int incomingCount = probeStatus.Get_count(MPI.OBJECT);
 
-                if (status.tag == STOP_TAG) {
+                if (probeStatus.tag == STOP_TAG) {
+                    Particle[] dummy = new Particle[incomingCount];
+                    MPI.COMM_WORLD.Recv(dummy, 0, incomingCount, MPI.OBJECT, 0, STOP_TAG);
                     break;
                 }
+
+                Particle[] buffer = new Particle[incomingCount];
+                Status status = MPI.COMM_WORLD.Recv(buffer, 0, incomingCount, MPI.OBJECT, 0, probeStatus.tag);
 
                 int count = status.Get_count(MPI.OBJECT);
 

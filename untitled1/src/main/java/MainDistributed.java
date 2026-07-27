@@ -10,6 +10,8 @@ public class MainDistributed {
         ParticleEngine.mpiRank = rank;
         ParticleEngine.mpiSize = size;
 
+        MPI.COMM_WORLD.Barrier();
+
         if (rank == 0) {
             GUI gui = new GUI();
 

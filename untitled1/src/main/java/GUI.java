@@ -113,6 +113,32 @@ public class GUI {
         });
     }
 
+    public double runOnceBlocking(int numParticles, ParticleEngine.ExecutionMode mode) {
+        if (engine == null) {
+            engine = new ParticleEngine(400, 450, numParticles);
+        } else {
+            engine.resetEngine(400, 450, numParticles);
+        }
+
+        engine.startBurst(400, 450, drawingPanel.getWidth(), drawingPanel.getHeight(), numParticles, mode);
+
+        long startTime = System.nanoTime();
+        int totalFrames = 0;
+        boolean isAlive = true;
+
+        while (isAlive) {
+            isAlive = engine.updateParticles(0.016);
+            engine.renderFrame(drawingPanel.getWidth(), drawingPanel.getHeight());
+            drawingPanel.repaint();
+            totalFrames++;
+        }
+
+        double elapsedSeconds = (System.nanoTime() - startTime) / 1e9;
+        engine.shutDown();
+
+        return totalFrames / elapsedSeconds;
+    }
+
     private void reset() {
         totalFrames = 0;
     }
